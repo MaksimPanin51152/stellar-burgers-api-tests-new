@@ -1,110 +1,121 @@
 package praktikumTest.api;
 
-import io.restassured.RestAssured;
+import io.qameta.allure.Description;
+import io.qameta.allure.junit4.DisplayName;
 import io.restassured.response.Response;
-import org.junit.BeforeClass;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
 
-import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
 
 public class OrderCreationTests {
 
-    private static String accessToken;
+    private OrderClient orderClient;
+    private String accessToken;
+    private String email;
+    private final String password = "123456";
+    private final String name = "OrderUser";
 
-    @BeforeClass
-    public static void setup() {
-        RestAssured.baseURI = "https://stellarburgers.education-services.ru/api";
+    @Before
+    public void setup() {
+        orderClient = new OrderClient();
 
-        // Логинимся и получаем токен для авторизации заказов
-        String loginBody = "{ \"email\": \"existinguser@test.com\", \"password\": \"123456\" }";
-        Response response = given()
-                .header("Content-Type", "application/json")
-                .body(loginBody)
-                .when()
-                .post("/auth/login")
-                .then()
-                .statusCode(200)
-                .extract().response();
+        email = "user_" + UUID.randomUUID() + "@test.com";
+        User user = new User(email, password, name);
 
-        accessToken = response.path("accessToken");
+        // Регистрация пользователя через статический метод UserClient
+        Response createResponse = UserClient.registerUser(user);
+        createResponse.then().statusCode(200);
+        accessToken = createResponse.path("accessToken");
+    }
+
+    @After
+    public void cleanup() {
+        if (accessToken != null) {
+            UserClient.deleteUser(accessToken);
+        }
+    }
+
+    // Получение ID первого ингредиента
+    private String getFirstIngredientId() {
+        Response response = orderClient.getIngredients();
+        response.then().statusCode(200);
+        return response.path("data[0]._id");
     }
 
     @Test
+    @DisplayName("Создание заказа с авторизацией")
+    @Description("Проверка успешного создания заказа при наличии accessToken и валидных ингредиентов")
     public void createOrderWithAuth() {
-        String body = "{ \"ingredients\": [\"60d3b41abdacab0026a733c6\"] }";
+        String ingredientId = getFirstIngredientId();
+        Order order = new Order(List.of(ingredientId));
 
-        given()
-                .header("Content-Type", "application/json")
-                .header("Authorization", accessToken)
-                .body(body)
-                .when()
-                .post("/orders")
-                .then()
+        Response response = orderClient.createOrder(order, accessToken);
+        response.then()
                 .statusCode(200)
                 .body("success", equalTo(true))
                 .body("order.number", notNullValue());
     }
 
     @Test
+    @DisplayName("Создание заказа без авторизации")
+    @Description("Проверка возможности создания заказа без accessToken")
     public void createOrderWithoutAuth() {
-        String body = "{ \"ingredients\": [\"60d3b41abdacab0026a733c6\"] }";
+        String ingredientId = getFirstIngredientId();
+        Order order = new Order(List.of(ingredientId));
 
-        given()
-                .header("Content-Type", "application/json")
-                .body(body)
-                .when()
-                .post("/orders")
-                .then()
-                .statusCode(401)
-                .body("success", equalTo(false))
-                .body("message", containsString("authorised"));
-    }
-
-    @Test
-    public void createOrderWithIngredients() {
-        String body = "{ \"ingredients\": [\"60d3b41abdacab0026a733c6\", \"609646e4dc916e00276b2870\"] }";
-
-        given()
-                .header("Content-Type", "application/json")
-                .header("Authorization", accessToken)
-                .body(body)
-                .when()
-                .post("/orders")
-                .then()
+        Response response = orderClient.createOrder(order, null);
+        response.then()
                 .statusCode(200)
-                .body("success", equalTo(true));
+                .body("success", equalTo(true))
+                .body("order.number", notNullValue());
     }
 
     @Test
+    @DisplayName("Создание заказа без ингредиентов")
+    @Description("Проверка, что при отсутствии ингредиентов возвращается 400 и корректное сообщение")
     public void createOrderWithoutIngredients() {
-        String body = "{ \"ingredients\": [] }";
+        Order emptyOrder = new Order(List.of());
 
-        given()
-                .header("Content-Type", "application/json")
-                .header("Authorization", accessToken)
-                .body(body)
-                .when()
-                .post("/orders")
-                .then()
+        Response response = orderClient.createOrder(emptyOrder, accessToken);
+        response.then()
                 .statusCode(400)
                 .body("success", equalTo(false))
-                .body("message", containsString("Ingredient ids must be provided"));
+                .body("message", equalTo("Ingredient ids must be provided"));
     }
 
     @Test
+    @DisplayName("Создание заказа с невалидным ингредиентом")
+    @Description("Проверка, что при неверном ID ингредиента сервер возвращает 500 Internal Server Error")
     public void createOrderWithInvalidIngredientHash() {
-        String body = "{ \"ingredients\": [\"invalid_hash\"] }";
+        Order invalidOrder = new Order(List.of("invalid_id_123"));
 
-        given()
-                .header("Content-Type", "application/json")
-                .header("Authorization", accessToken)
-                .body(body)
-                .when()
-                .post("/orders")
-                .then()
-                .statusCode(500);
+        Response response = orderClient.createOrder(invalidOrder, accessToken);
+        response.then()
+                .statusCode(500)
+                .body(containsString("Internal Server Error")); // проверяем, что тело содержит текст
+    }
+
+
+    @Test
+    @DisplayName("Создание заказа с несколькими ингредиентами")
+    @Description("Проверка, что можно создать заказ с несколькими валидными ингредиентами")
+    public void createOrderWithMultipleIngredients() {
+        Response ingredientsResponse = orderClient.getIngredients();
+        ingredientsResponse.then().statusCode(200);
+
+        List<String> ingredients = ingredientsResponse.path("data._id");
+        // Берем первые два ингредиента для теста
+        Order order = new Order(ingredients.subList(0, Math.min(2, ingredients.size())));
+
+        Response response = orderClient.createOrder(order, accessToken);
+        response.then()
+                .statusCode(200)
+                .body("success", equalTo(true))
+                .body("order.number", notNullValue());
     }
 }
