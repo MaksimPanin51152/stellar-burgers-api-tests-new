@@ -1,39 +1,34 @@
 package praktikumTest.api;
 
-import io.restassured.RestAssured;
-import io.restassured.builder.RequestSpecBuilder;
-import io.restassured.http.ContentType;
+import io.qameta.allure.Step;
 import io.restassured.response.Response;
-import io.restassured.specification.RequestSpecification;
 
 import static io.restassured.RestAssured.given;
 
-public class UserClient {
+public class UserClient extends BaseClient {
 
-    private static final RequestSpecification requestSpec = new RequestSpecBuilder()
-            .setBaseUri("https://stellarburgers.education-services.ru/api")
-            .setContentType(ContentType.JSON)
-            .build();
-
+    @Step("Регистрация нового пользователя")
     public static Response registerUser(User user) {
         return given()
-                .spec(requestSpec)
+                .spec(baseSpec)
                 .body(user)
                 .when()
                 .post("/auth/register");
     }
 
+    @Step("Авторизация пользователя")
     public static Response loginUser(User user) {
         return given()
-                .spec(requestSpec)
+                .spec(baseSpec)
                 .body(user)
                 .when()
                 .post("/auth/login");
     }
 
+    @Step("Удаление пользователя")
     public static Response deleteUser(String accessToken) {
         return given()
-                .spec(requestSpec)
+                .spec(baseSpec)
                 .header("Authorization", accessToken)
                 .when()
                 .delete("/auth/user");
